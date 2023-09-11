@@ -1,0 +1,181 @@
+# -*- coding: utf-8 -*-
+
+import maya.cmds as cmds
+
+# 変数 locator を外部で定義する
+locator = None
+
+# 親コントローラの名前を格納するグローバル変数
+parent_controller_name = None
+
+# 子コントローラの名前を格納するグローバル変数
+child_controller_name = None
+
+# ロケーターの名前を格納するグローバル変数
+locator_name = None
+
+# ロケーターの名前を格納するグローバル変数
+handle_locator_name = None
+
+# 変数 handle_locator を外部で定義する
+handle_locator = None
+
+def create_locator_with_parent_constraint(*args):
+    # 親コントローラを選択するウィンドウを作成
+    if cmds.window("selectParentControllerWindow", exists=True):
+        cmds.deleteUI("selectParentControllerWindow")
+    window = cmds.window("selectParentControllerWindow", title="親となる手の回転のコントローラを選択してください", widthHeight=(300, 100))
+    cmds.columnLayout(adjustableColumn=True)
+    cmds.text(label="コントローラを選択してください")
+    cmds.button(label="選択", command=select_parent_controller)
+    cmds.showWindow(window)
+
+def select_parent_controller(*args):
+    global locator, parent_controller_name  # 変数 locator と parent_controller_name をグローバルスコープに指定
+    # 親コントローラを選択
+    selection = cmds.ls(selection=True)
+    if not selection:
+        cmds.confirmDialog(title="エラー", message="コントローラを選択してください", button="OK")
+        return
+
+    parent_controller_name = selection[0]
+
+    # 親コントローラを親にするか確認するウィンドウを表示
+    result = cmds.confirmDialog(
+        title="確認",
+        message="%sを親にしますか？" % parent_controller_name,
+        button=["OK", "キャンセル"],
+        defaultButton="OK",
+        cancelButton="キャンセル",
+        dismissString="キャンセル"
+    )
+
+    if result == "OK":
+        # ロケーターを生成
+        locator_name = "%s_Info" % parent_controller_name
+        locator = cmds.spaceLocator(name=locator_name)[0]
+
+        # ロケーターの位置を設定
+        parent_controller_position = cmds.xform(parent_controller_name, query=True, translation=True, worldSpace=True)
+        cmds.xform(locator, translation=parent_controller_position, worldSpace=True)
+
+        # ロケーターの回転を設定
+        parent_controller_rotation = cmds.xform(parent_controller_name, query=True, rotation=True, worldSpace=True)
+        cmds.xform(locator, rotation=parent_controller_rotation, worldSpace=True)
+
+        # 選択したコントローラの後にロケーターを選択してペアレントコンストレイン
+        cmds.select(parent_controller_name, add=True)
+        cmds.select(locator, add=True)
+        parent_constraint = cmds.parentConstraint(weight=1)[0]
+
+        # 子コントローラを選択するウィンドウを表示
+        if cmds.window("selectChildControllerWindow", exists=True):
+            cmds.deleteUI("selectChildControllerWindow")
+        window = cmds.window("selectChildControllerWindow", title="子となる手の回転のコントローラを選択してください", widthHeight=(300, 100))
+        cmds.columnLayout(adjustableColumn=True)
+        cmds.text(label="コントローラを選択してください")
+        cmds.button(label="選択", command=select_child_controller)
+        cmds.showWindow(window)
+
+def select_child_controller(*args):
+    global locator, parent_controller_name, child_controller_name ,handle_locator  # 変数 locator, parent_controller_name, child_controller_name, handle_locator をグローバルスコープに指定
+    # 子コントローラを選択
+    selection = cmds.ls(selection=True)
+    if not selection:
+        cmds.confirmDialog(title="エラー", message="コントローラを選択してください", button="OK")
+        return
+
+    child_controller_name = selection[0]
+
+    # 子コントローラを子にするか確認するウィンドウを表示
+    result = cmds.confirmDialog(
+        title="確認",
+        message="%sを子にしますか？" % child_controller_name,
+        button=["OK", "キャンセル"],
+        defaultButton="OK",
+        cancelButton="キャンセル",
+        dismissString="キャンセル"
+    )
+
+    if result == "OK":
+        # ロケーターを生成
+        handle_locator_name = "%s_Handle" % child_controller_name
+        handle_locator = cmds.spaceLocator(name=handle_locator_name)[0]
+
+        # ロケーターの大きさをデフォルトの10倍に設定
+        cmds.scale(10, 10, 10, handle_locator)
+
+        # ロケーターを親コントローラの下に配置
+        cmds.parent(handle_locator, locator)  # グローバル変数 locator を使用
+
+        # ⑪ ロケーターの位置を親コントローラに合わせる
+        parent_controller_position = cmds.xform(parent_controller_name, query=True, translation=True, worldSpace=True)
+        cmds.xform(handle_locator, translation=parent_controller_position, worldSpace=True)
+
+        # ⑫ ロケーターの回転を親コントローラに合わせる
+        parent_controller_rotation = cmds.xform(parent_controller_name, query=True, rotation=True, worldSpace=True)
+        cmds.xform(handle_locator, rotation=parent_controller_rotation, worldSpace=True)
+
+        # ⑭ 子コントローラの後にロケーターを選択してペアレントコンストレイン
+        cmds.select(child_controller_name, add=True)
+        cmds.select(handle_locator, add=True)
+        child_constraint = cmds.parentConstraint(weight=1)[0]
+
+        # ⑮ ロケーターをタイムスライダで選択されている範囲でベイク
+        start_frame = int(cmds.playbackOptions(query=True, minTime=True))
+        end_frame = int(cmds.playbackOptions(query=True, maxTime=True))
+        cmds.bakeResults(handle_locator, simulation=True, t=(start_frame, end_frame), sampleBy=1, disableImplicitControl=True, preserveOutsideKeys=True)
+
+        # ⑯ ペアレントコンストレインの関係を削除
+        cmds.delete(child_constraint)
+
+        # ウィンドウを閉じる
+        cmds.deleteUI("selectChildControllerWindow")
+        cmds.deleteUI("selectParentControllerWindow")
+
+        # 子になる手の移動のコントローラを選択するウィンドウを表示
+    if cmds.window("selectMoveControllerWindow", exists=True):
+        cmds.deleteUI("selectMoveControllerWindow")
+    window = cmds.window("selectMoveControllerWindow", title="子になる手の移動のコントローラを選択してください", widthHeight=(300, 100))
+    cmds.columnLayout(adjustableColumn=True)
+    cmds.text(label="コントローラを選択してください")
+    cmds.button(label="選択", command=select_move_controller)
+    cmds.showWindow(window)
+
+def select_move_controller(*args):
+    global parent_controller_name  # 変数 parent_controller_name をグローバルスコープに指定
+    # 子になる手の移動のコントローラを選択
+    selection = cmds.ls(selection=True)
+    if not selection:
+        cmds.confirmDialog(title="エラー", message="コントローラを選択してください", button="OK")
+        return
+
+    move_controller_name = selection[0]
+
+    # 子になるコントローラが合っているか確認するウィンドウを表示
+    result = cmds.confirmDialog(
+        title="確認",
+        message="%sが子になる手の移動のコントローラで合ってますか？" % move_controller_name,
+        button=["OK", "キャンセル"],
+        defaultButton="OK",
+        cancelButton="キャンセル",
+        dismissString="キャンセル"
+    )
+
+    if result == "OK":
+        # ③ ロケーターの後に子になる手の移動のコントローラを選択して、ポイントコンストレイン
+        cmds.select(handle_locator, add=True)
+        cmds.select(move_controller_name, add=True)
+        cmds.pointConstraint(weight=1)
+
+        # ④ ロケーターの後に子になる手の移動のコントローラを選択して、オリエントコンストレイン
+        cmds.select(handle_locator, add=True)
+        cmds.select(child_controller_name, add=True)
+        cmds.orientConstraint(weight=1)
+
+        # ウィンドウを閉じる
+        cmds.deleteUI("selectMoveControllerWindow")
+
+
+# ウィンドウを作成
+create_locator_with_parent_constraint()
